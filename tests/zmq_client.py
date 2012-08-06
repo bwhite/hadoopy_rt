@@ -12,7 +12,7 @@ in_req_sock.connect("tcp://127.0.0.1:3000")
 tbio = hadoopy_rt.TypedBytesIO()
 
 count = 0
-latency_check = False
+latency_check = True
 while True:
     v = 'blah'
     kv = (v, {'client_time': time.time(),

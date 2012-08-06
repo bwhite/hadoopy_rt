@@ -24,7 +24,7 @@ while True:
     if v['count'] - 1 != prev_count:
         print('Mismatch count!')
     prev_count = v['count']
-    if time.time() - st >= 1:
+    if time.time() - st >= 5:
         print('Throughput [%f]' % (tcount / (time.time() - st)))
         print((t0, t1, t2))
         st = time.time()
