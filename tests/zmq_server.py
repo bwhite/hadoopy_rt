@@ -8,13 +8,11 @@ ctx = zmq.Context()
 
 in_sock = ctx.socket(zmq.PULL)
 in_sock.bind("tcp://127.0.0.1:3001")
-tbio = hadoopy_rt.TypedBytesIO()
 
 prev_count = -1
 st = time.time()
 tcount = 0
 while True:
-    #k, v = tbio.loads(in_sock.recv())
     k, v = in_sock.recv_pyobj()
     tcount += 1
     v['server_time'] = time.time()
