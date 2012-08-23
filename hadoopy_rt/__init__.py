@@ -7,6 +7,9 @@ import os
 import random
 import json
 import hadoopy_helper
+import base64
+import sys
+import hadoopy_rt
 
 
 class DiscoverTimeout(Exception):
@@ -26,13 +29,22 @@ def _lf(fn):
     return os.path.join(__path__[0], fn)
 
 
-def launch_zmq(input_socket, output_socket, script_path, output_func=False):
+def launch_zmq(input_socket, output_socket, script_path, output_func=False, cleanup_func=None, num_stops=1):
+    poll = lambda : len(stopped) >= num_stops or input_socket.poll(100)
+    stopped = []
     def _kvs():
-        kv = None
-        while not isinstance(kv, StopWorker):
+        kv = (None, None)
+        while len(stopped) < num_stops:
             kv = input_socket.recv_pyobj()
+            if isinstance(kv[0], hadoopy_rt.StopWorker):
+                stopped.append(True)
+                if len(stopped) >= num_stops:
+                    if cleanup_func:
+                        cleanup_func()
+                else:
+                    continue
             yield kv
-    poll = functools.partial(input_socket.poll, 0)
+
     for kv in hadoopy.launch_local(_kvs(), None, script_path, poll=poll)['output']:
         if output_func:
             output_socket(kv)
@@ -40,20 +52,23 @@ def launch_zmq(input_socket, output_socket, script_path, output_func=False):
             output_socket.send_pyobj(kv)
 
 
-def launch_tree_same(output_path, script_path, height, machines, job_id):
+def launch_tree_same(output_path, script_path, height, machines, ports, job_id):
     num_nodes = 2 ** (height) - 1
-    out_nodes = dict((x, x / 2) for x in range(1, 2 ** (height) - 1))
+    out_nodes = dict((x, (x - 1) / 2) for x in range(1, 2 ** (height) - 1))
+    print(out_nodes)
     v = {'script_name': os.path.basename(script_path),
          'script_data': open(script_path).read(),
          'out_nodes': out_nodes,
          'num_nodes': num_nodes}
-    cmdenvs = {'machines': json.dumps(machines),
+    cmdenvs = {'machines': base64.b64encode(json.dumps(machines)),
                'job_id': job_id,
-               'discover_ports': random.sample(xrange(49152, 65536), 5)}
+               'ports': base64.b64encode(json.dumps(ports))}
     with hadoopy_helper.hdfs_temp() as input_path:
         for node_num in range(num_nodes):
-            hadoopy.writetb('%s/input/%d' % (input_path, node_num), [(node_num, v)])
-        hadoopy.launch(input_path, output_path, _lf('hadoopy_rt_job.py'), cmdenvs=cmdenvs)
+            hadoopy.writetb('%s/%d' % (input_path, node_num), [(node_num, v)])
+        hadoopy.launch(input_path, output_path, _lf('hadoopy_rt_job.py'), cmdenvs=cmdenvs,
+                       jobconfs={'mapred.map.tasks.speculative.execution': 'false',
+                                 'mapred.reduce.tasks.speculative.execution': 'false'})
 
 
 def _get_ip():
@@ -102,7 +117,6 @@ def discover_server(job_id, num_nodes, machines, ports, setup_deadline=30):
 def discover(job_id, machines, ports, node_num=-1, input_port=-1):
     ctx = zmq.Context()
     slave_ip = _get_ip()
-    # Find master
     socks = []
     try:
         for machine in machines:
