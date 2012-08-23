@@ -10,6 +10,7 @@ logging.basicConfig(level=logging.DEBUG)
 JOB_ID = str(random.random())
 MACHINES = ['127.0.0.1']
 PORTS = random.sample(xrange(49152, 65536), 5)
+LEVELS = 2
 
 
 def input_worker(job_id, machines, ports):
@@ -22,9 +23,12 @@ def input_worker(job_id, machines, ports):
         s = ctx.socket(zmq.PUSH)
         s.connect('tcp://%s:%s' % work_graph[n])
         return s
-    socks = [connect(x) for x in range(1, 3)]
+    high = 2 ** (LEVELS) - 1
+    low = high - 2 ** (LEVELS - 1)
+    print('Nodes[%d,%d]' % (low, high))
+    socks = [connect(x) for x in range(low, high)]
     while True:
-        for x in range(20):
+        for x in xrange(20000):
             for s in socks:
                 s.send_pyobj((x % 10, 1))
         for s in socks:
@@ -36,7 +40,7 @@ def input_worker(job_id, machines, ports):
 def main():
     p = multiprocessing.Process(target=input_worker, args=(JOB_ID, MACHINES, PORTS))
     p.start()
-    hadoopy_rt.launch_tree_same('hadoopy_rt/output/%f' % time.time(), hadoopy_rt.__path__[0] + '/sum_job.py', 2, MACHINES, PORTS, JOB_ID)
+    hadoopy_rt.launch_tree_same('hadoopy_rt/output/%f' % time.time(), hadoopy_rt.__path__[0] + '/sum_job.py', LEVELS, MACHINES, PORTS, JOB_ID)
     p.join()
 
 if __name__ == '__main__':
