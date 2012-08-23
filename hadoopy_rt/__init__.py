@@ -17,7 +17,7 @@ class FlushWorker(object):
     """Flush worker message"""
 
 
-class StopWorker(object):
+class StopWorker(FlushWorker):
     """Stop worker message"""
 
 
@@ -28,8 +28,10 @@ def _lf(fn):
 
 def launch_zmq(input_socket, output_socket, script_path, output_func=False):
     def _kvs():
-        while True:
-            yield input_socket.recv_pyobj()
+        kv = None
+        while not isinstance(kv, StopWorker):
+            kv = input_socket.recv_pyobj()
+            yield kv
     poll = functools.partial(input_socket.poll, 0)
     for kv in hadoopy.launch_local(_kvs(), None, script_path, poll=poll)['output']:
         if output_func:
