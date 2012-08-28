@@ -7,17 +7,13 @@ class Mapper(object):
 
     def __init__(self):
         self.sum = {}
-
+    
+    @hadoopy_rt.close_on_flush
     def map(self, key, value):
-        if isinstance(key, hadoopy_rt.FlushWorker):
-            for kv in self.close():
-                yield kv
-            yield key, value
-        else:
-            try:
-                self.sum[key] += value
-            except KeyError:
-                self.sum[key] = value
+        try:
+            self.sum[key] += value
+        except KeyError:
+            self.sum[key] = value
 
     def close(self):
         for kv in self.sum.items():

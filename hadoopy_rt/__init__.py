@@ -137,3 +137,25 @@ def discover(job_id, machines, ports, node_num=-1, input_port=-1):
         # Close sockets
         for sock in socks:
             sock.close(0)
+
+
+def _output_iter(iter_or_none):
+    if iter_or_none is None:
+        return ()
+    return iter_or_none
+
+
+
+
+def close_on_flush(func):
+
+    def wrap(self, key, value):
+        if isinstance(key, hadoopy_rt.FlushWorker):
+            for x in _output_iter(self.close()):
+                yield x
+            yield key, value  # Yield the original FlushWorker
+        else:
+            for x in _output_iter(func(self, key, value)):
+                yield x
+    return wrap
+
