@@ -24,32 +24,46 @@ class StopWorker(FlushWorker):
     """Stop worker message"""
 
 
+class ReduceWorker(FlushWorker):
+    """Stop worker message"""
+
+
 def _lf(fn):
     from . import __path__
     return os.path.join(__path__[0], fn)
 
 
-def launch_zmq(input_socket, output_socket, script_path, output_func=False, cleanup_func=None, num_stops=1):
+def launch_zmq(input_socket, output_socket, script_path, output_func=False, cleanup_func=None, num_stops=1, reducer=False, **kw):
     poll = lambda : len(stopped) >= num_stops or input_socket.poll(100)
     stopped = []
+    reduced = [[]]
     def _kvs():
         kv = (None, None)
         while len(stopped) < num_stops:
             kv = input_socket.recv_pyobj()
             if isinstance(kv[0], hadoopy_rt.StopWorker):
                 stopped.append(True)
-                if len(stopped) >= num_stops:
+                if len(stopped) >= num_stops:   # Passes the message on
                     if cleanup_func:
                         cleanup_func()
                 else:
                     continue
+            if isinstance(kv[0], hadoopy_rt.ReduceWorker):
+                reduced[0].append(True)
+                if len(reduced[0]) >= num_stops:  # Passes the message on
+                    if reducer:  
+                        break
+                    else:
+                        reduced[0] = []
+                else:
+                    continue
             yield kv
-
-    for kv in hadoopy.launch_local(_kvs(), None, script_path, poll=poll)['output']:
-        if output_func:
-            output_socket(kv)
-        else:
-            output_socket.send_pyobj(kv)
+    while len(stopped) < num_stops:
+        for kv in hadoopy.launch_local(_kvs(), None, script_path, poll=poll, **kw)['output']:
+            if output_func:
+                output_socket(kv)
+            else:
+                output_socket.send_pyobj(kv)
 
 
 def launch_tree_same(output_path, script_path, height, machines, ports, job_id):
@@ -66,6 +80,30 @@ def launch_tree_same(output_path, script_path, height, machines, ports, job_id):
     with hadoopy_helper.hdfs_temp() as input_path:
         for node_num in range(num_nodes):
             hadoopy.writetb('%s/%d' % (input_path, node_num), [(node_num, v)])
+        hadoopy.launch(input_path, output_path, _lf('hadoopy_rt_job.py'), cmdenvs=cmdenvs,
+                       jobconfs={'mapred.map.tasks.speculative.execution': 'false',
+                                 'mapred.reduce.tasks.speculative.execution': 'false'})
+
+
+def launch_map_reduce(output_path, script_path, map_confs, reduce_conf, machines, ports, job_id):
+    num_nodes = len(map_confs) + 1
+    map_confs = list(map_confs)
+    out_nodes = dict((x, 0) for x in range(1, len(map_confs) + 1))
+    machine_confs = [reduce_conf] + map_confs
+    print(out_nodes)
+    v = {'script_name': os.path.basename(script_path),
+         'script_data': open(script_path).read(),
+         'out_nodes': out_nodes,
+         'num_nodes': num_nodes}
+    cmdenvs = {'machines': base64.b64encode(json.dumps(machines)),
+               'job_id': job_id,
+               'ports': base64.b64encode(json.dumps(ports))}
+    with hadoopy_helper.hdfs_temp() as input_path:
+        for node_num in range(num_nodes):
+            machine_v = dict(machine_confs[node_num])
+            machine_v.update(v)
+            machine_v['reducer'] = not node_num
+            hadoopy.writetb('%s/%d' % (input_path, node_num), [(node_num, machine_v)])
         hadoopy.launch(input_path, output_path, _lf('hadoopy_rt_job.py'), cmdenvs=cmdenvs,
                        jobconfs={'mapred.map.tasks.speculative.execution': 'false',
                                  'mapred.reduce.tasks.speculative.execution': 'false'})
@@ -151,8 +189,9 @@ def close_on_flush(func):
 
     def wrap(self, key, value):
         if isinstance(key, hadoopy_rt.FlushWorker):
-            for x in _output_iter(self.close()):
-                yield x
+            if hasattr(self, 'close'):
+                for x in _output_iter(self.close()):
+                    yield x
             yield key, value  # Yield the original FlushWorker
         else:
             for x in _output_iter(func(self, key, value)):

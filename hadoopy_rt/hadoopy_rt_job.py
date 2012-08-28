@@ -38,15 +38,24 @@ class Mapper(object):
                 
         work_graph = hadoopy_rt.discover(self.job_id, self.machines, self.ports,
                                          node_num, worker_port)  # [node_num] = (host, port)
+        launch_kw_args = dict((x, data[x]) for x in ['files', 'cmdenvs'] if x in data)
+        reducer = data.get('reducer', False)
+        if reducer:
+            launch_kw_args['identity_mapper'] = True
+        else:
+            launch_kw_args['num_reducers'] = 0
+        launch_kw_args['reducer'] = reducer
+        sys.stderr.write('Extras[%s]\n' % str(launch_kw_args))
+        sys.stderr.write('Data[%s]\n' % str(data))
         open(data['script_name'], 'w').write(data['script_data'])
         if node_num in out_nodes:
             out_sock = ctx.socket(zmq.PUSH)
             out_sock.connect('tcp://%s:%d' % work_graph[out_nodes[node_num]])
-            hadoopy_rt.launch_zmq(in_sock, out_sock, data['script_name'], cleanup_func=cleanup_func, num_stops=num_stops)
+            hadoopy_rt.launch_zmq(in_sock, out_sock, data['script_name'], cleanup_func=cleanup_func, num_stops=num_stops, **launch_kw_args)
         else:
             out_data = []
             hadoopy_rt.launch_zmq(in_sock, out_data.append, data['script_name'], output_func=True, cleanup_func=cleanup_func,
-                                  num_stops=num_stops)
+                                  num_stops=num_stops, **launch_kw_args)
             for x in out_data:
                 if not isinstance(x[0], hadoopy_rt.FlushWorker):
                     yield x
