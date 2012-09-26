@@ -46,7 +46,8 @@ def launch_map_update(script_paths, machines, ports, job_id):
             hadoopy.writetb('%s/input/%d' % (input_path, node_num), [(node_num, v)])
         hadoopy.launch(input_path + '/input', input_path + '/output_path_empty', _lf('hadoopy_rt_job.py'), cmdenvs=cmdenvs,
                        jobconfs={'mapred.map.tasks.speculative.execution': 'false',
-                                 'mapred.reduce.tasks.speculative.execution': 'false'})
+                                 'mapred.reduce.tasks.speculative.execution': 'false',
+                                 'mapred.task.timeout': '0'})
 
     
 def _get_ip():
@@ -125,9 +126,10 @@ def _output_iter(iter_or_none):
 
 class Slate(object):
 
-    def __init__(self, redis, key):
+    def __init__(self, redis, stream, key):
         self._redis = redis
-        self._key = key
+        self._stream = unicode(stream).encode('utf-8')
+        self._key = unicode(key).encode('utf-8')
         self._get = False
         self._set = False
         self._data = None
@@ -135,7 +137,7 @@ class Slate(object):
     def get(self):
         if not self._get:
             self._get = True
-            self._data = self._redis.get(self._key)
+            self._data = self._redis.hget(self._stream, self._key)
         return self._data
 
     def set(self, data):
@@ -145,7 +147,7 @@ class Slate(object):
 
     def _flush(self):
         if self._set:
-            self._redis.set(self._key, self._data)
+            self._redis.hset(self._stream, self._key, self._data)
         
 
 class Updater(object):
@@ -155,7 +157,7 @@ class Updater(object):
         self._stream = os.environ['hadoopy_rt_stream']
 
     def map(self, key, value):
-        slate = Slate(self._redis, ':'.join([self._stream, unicode(key).encode('utf-8')]))  # TODO(brandyn): Converting to string allows for collisions
+        slate = Slate(self._redis, self._stream, unicode(key).encode('utf-8'))  # TODO(brandyn): Converting to string allows for collisions
         out = self.update(key, value, slate)
         if out is not None:
             for x in out:
