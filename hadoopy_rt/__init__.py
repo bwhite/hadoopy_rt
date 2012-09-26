@@ -10,6 +10,7 @@ import hadoopy_helper
 import base64
 import sys
 import hadoopy_rt
+import redis
 
 
 class DiscoverTimeout(Exception):
@@ -120,3 +121,44 @@ def _output_iter(iter_or_none):
     if iter_or_none is None:
         return ()
     return iter_or_none
+
+
+class Slate(object):
+
+    def __init__(self, redis, key):
+        self._redis = redis
+        self._key = key
+        self._get = False
+        self._set = False
+        self._data = None
+
+    def get(self):
+        if not self._get:
+            self._get = True
+            self._data = self._redis.get(self._key)
+        return self._data
+
+    def set(self, data):
+        if not self._set:
+            self._get = self._set = True
+            self._data = data
+
+    def _flush(self):
+        if self._set:
+            self._redis.set(self._key, self._data)
+        
+
+class Updater(object):
+
+    def __init__(self):
+        self._redis = redis.StrictRedis()  # TODO(Brandyn): Allow setting non default
+        self._stream = os.environ['hadoopy_rt_stream']
+
+    def map(self, key, value):
+        slate = Slate(self._redis, ':'.join([self._stream, str(key)]))  # TODO(brandyn): Converting to string allows for collisions
+        out = self.update(key, value, slate)
+        if out is not None:
+            for x in out:
+                yield x
+        slate._flush()
+        

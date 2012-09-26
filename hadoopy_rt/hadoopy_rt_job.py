@@ -34,6 +34,11 @@ class Mapper(object):
         node_host_ports = hadoopy_rt.discover(self.job_id, self.machines, self.ports,
                                               node_num, worker_port)  # [node_num] = (host, port)
         launch_kw_args = dict((x, data[x]) for x in ['files', 'cmdenvs'] if x in data)
+        try:
+            launch_kw_args['cmdenvs'] = hadoopy._runner._listeq_to_dict(launch_kw_args['cmdenvs'])
+        except KeyError:
+            launch_kw_args['cmdenvs'] = {}
+        launch_kw_args['cmdenvs']['hadoopy_rt_stream'] = str(node_num)
         sys.stderr.write('Extras[%s]\n' % str(launch_kw_args))
         sys.stderr.write('Data[%s]\n' % str(data))
         open(data['script_name'], 'w').write(data['script_data'])

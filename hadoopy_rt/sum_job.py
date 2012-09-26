@@ -3,13 +3,15 @@ import hadoopy
 import hadoopy_rt
 
 
-class Mapper(object):
+class Updater(hadoopy_rt.Updater):
 
     def __init__(self):
-        pass
+        super(Updater, self).__init__()
 
-    def map(self, key, value):
-        print((key, value))
+    def update(self, key, value, slate):
+        a = slate.get()
+        slate.set((0 if a is None else int(a)) + value)
+
 
 if __name__ == '__main__':
-    hadoopy.run(Mapper)
+    hadoopy.run(Updater)
