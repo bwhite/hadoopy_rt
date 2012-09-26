@@ -35,20 +35,20 @@ def launch_zmq(input_socket, output_sockets, script_path, cleanup_func=None, **k
 
 def launch_map_update(script_paths, machines, ports, job_id):
     num_nodes = len(script_paths)
-    for node_num, script_path in enumerate(script_paths):
-        v = {'script_name': os.path.basename(script_path),
-             'script_data': open(script_path).read(),
-             'num_nodes': num_nodes}
-        cmdenvs = {'machines': base64.b64encode(json.dumps(machines)),
-                   'job_id': job_id,
-                   'ports': base64.b64encode(json.dumps(ports))}
-        with hadoopy_helper.hdfs_temp() as input_path:
-            hadoopy.writetb('%s/%d' % (input_path, node_num), [(node_num, v)])
-            hadoopy.launch(input_path, input_path + '/output_path_empty', _lf('hadoopy_rt_job.py'), cmdenvs=cmdenvs,
-                           jobconfs={'mapred.map.tasks.speculative.execution': 'false',
-                                     'mapred.reduce.tasks.speculative.execution': 'false'})
+    with hadoopy_helper.hdfs_temp() as input_path:
+        for node_num, script_path in enumerate(script_paths):
+            v = {'script_name': os.path.basename(script_path),
+                 'script_data': open(script_path).read(),
+                 'num_nodes': num_nodes}
+            cmdenvs = {'machines': base64.b64encode(json.dumps(machines)),
+                       'job_id': job_id,
+                       'ports': base64.b64encode(json.dumps(ports))}
+            hadoopy.writetb('%s/input/%d' % (input_path, node_num), [(node_num, v)])
+        hadoopy.launch(input_path + '/input', input_path + '/output_path_empty', _lf('hadoopy_rt_job.py'), cmdenvs=cmdenvs,
+                       jobconfs={'mapred.map.tasks.speculative.execution': 'false',
+                                 'mapred.reduce.tasks.speculative.execution': 'false'})
 
-
+    
 def _get_ip():
     ips = [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith("127.")][:1]
     if len(ips) != 1:
@@ -155,7 +155,7 @@ class Updater(object):
         self._stream = os.environ['hadoopy_rt_stream']
 
     def map(self, key, value):
-        slate = Slate(self._redis, ':'.join([self._stream, str(key)]))  # TODO(brandyn): Converting to string allows for collisions
+        slate = Slate(self._redis, ':'.join([self._stream, unicode(key).encode('utf-8')]))  # TODO(brandyn): Converting to string allows for collisions
         out = self.update(key, value, slate)
         if out is not None:
             for x in out:
