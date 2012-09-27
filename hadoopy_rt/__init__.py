@@ -26,7 +26,8 @@ def launch_zmq(input_socket, output_sockets, script_path, cleanup_func=None, **k
     poll = lambda : input_socket.poll(100)
 
     def _kvs():
-        yield input_socket.recv_pyobj()
+        while True:
+            yield input_socket.recv_pyobj()
     while True:
         for k, v in hadoopy.launch_local(_kvs(), None, script_path, poll=poll, **kw)['output']:
             # k is the node number, v is a k/v tuple
@@ -157,7 +158,7 @@ class Updater(object):
         self._stream = os.environ['hadoopy_rt_stream']
 
     def map(self, key, value):
-        slate = Slate(self._redis, self._stream, unicode(key).encode('utf-8'))  # TODO(brandyn): Converting to string allows for collisions
+        slate = Slate(self._redis, self._stream, key)  # TODO(brandyn): Converting to string allows for collisions
         out = self.update(key, value, slate)
         if out is not None:
             for x in out:

@@ -15,7 +15,8 @@ def twitter(queries):
     for item in urllib2.urlopen(request):
         try:
             item = json.loads(item)
-        except json.JSONDecodeError: #for whatever reason json reading twitters json sometimes raises this
+        except json.JSONDecodeError, e: #for whatever reason json reading twitters json sometimes raises this
+            print(e)
             continue
 
         if 'text' in item and 'user' in item:
