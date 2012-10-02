@@ -34,7 +34,8 @@ def main():
     p.start()
     sum_job_script = hadoopy_rt.__path__[0] + '/sum_job.py'
     tokenize_script = hadoopy_rt.__path__[0] + '/twitter_tokenize_job.py'
-    hadoopy_rt.launch_map_update([tokenize_script, sum_job_script], MACHINES, PORTS, JOB_ID)
+    nodes = [{'script_path': y, 'name': x} for x, y in enumerate([tokenize_script, sum_job_script])]
+    hadoopy_rt.launch_map_update(nodes, MACHINES, PORTS, JOB_ID)
     p.join()
 
 if __name__ == '__main__':

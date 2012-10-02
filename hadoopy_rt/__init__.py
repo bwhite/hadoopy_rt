@@ -34,17 +34,21 @@ def launch_zmq(input_socket, output_sockets, script_path, cleanup_func=None, **k
             output_sockets[k].send_pyobj(v)
 
 
-def launch_map_update(script_paths, machines, ports, job_id):
-    num_nodes = len(script_paths)
+def launch_map_update(nodes, machines, ports, job_id):
+    num_nodes = len(nodes)
     with hadoopy_helper.hdfs_temp() as input_path:
-        for node_num, script_path in enumerate(script_paths):
-            v = {'script_name': os.path.basename(script_path),
-                 'script_data': open(script_path).read(),
+        for node in nodes:
+            v = {'script_name': os.path.basename(node['script_path']),
+                 'script_data': open(node['script_path']).read(),
                  'num_nodes': num_nodes}
+            if 'cmdenvs' in node and node['cmdenvs'] is not None:
+                v['cmdenvs'] = node['cmdenvs']
+            if 'files' in node and node['files'] is not None:
+                v['files'] = node['files']
             cmdenvs = {'machines': base64.b64encode(json.dumps(machines)),
                        'job_id': job_id,
                        'ports': base64.b64encode(json.dumps(ports))}
-            hadoopy.writetb('%s/input/%d' % (input_path, node_num), [(node_num, v)])
+            hadoopy.writetb('%s/input/%d' % (input_path, node['name']), [(node['name'], v)])
         hadoopy.launch(input_path + '/input', input_path + '/output_path_empty', _lf('hadoopy_rt_job.py'), cmdenvs=cmdenvs,
                        jobconfs={'mapred.map.tasks.speculative.execution': 'false',
                                  'mapred.reduce.tasks.speculative.execution': 'false',
@@ -144,7 +148,7 @@ class Slate(object):
     def set(self, data):
         if not self._set:
             self._get = self._set = True
-            self._data = data
+        self._data = data
 
     def _flush(self):
         if self._set:
@@ -164,4 +168,3 @@ class Updater(object):
             for x in out:
                 yield x
         slate._flush()
-        
