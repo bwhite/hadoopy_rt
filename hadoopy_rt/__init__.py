@@ -22,32 +22,42 @@ def _lf(fn):
     return os.path.join(__path__[0], fn)
 
 
-def launch_zmq(input_socket, output_sockets, script_path, cleanup_func=None, **kw):
+def launch_zmq(input_socket, output_sockets, script_path, cleanup_func=None, outputs=None, **kw):
     poll = lambda : input_socket.poll(100)
 
     def _kvs():
         while True:
             yield input_socket.recv_pyobj()
-    while True:
-        for k, v in hadoopy.launch_local(_kvs(), None, script_path, poll=poll, **kw)['output']:
+
+    kvs = hadoopy.launch_local(_kvs(), None, script_path, poll=poll, **kw)['output']
+    sys.stderr.write('ZMQOutputs[%s]' % str(outputs))
+    if outputs is None:
+        for k, v in kvs:
             # k is the node number, v is a k/v tuple
             output_sockets[k].send_pyobj(v)
+    else:
+        for kv in kvs:
+            for s in outputs:
+                output_sockets[s].send_pyobj(kv)
 
 
 def launch_map_update(nodes, machines, ports, job_id):
     num_nodes = len(nodes)
     with hadoopy_helper.hdfs_temp() as input_path:
         for node in nodes:
+            print(node)
             v = {'script_name': os.path.basename(node['script_path']),
                  'script_data': open(node['script_path']).read(),
                  'num_nodes': num_nodes}
             if 'cmdenvs' in node and node['cmdenvs'] is not None:
                 v['cmdenvs'] = node['cmdenvs']
             if 'files' in node and node['files'] is not None:
-                v['files'] = node['files']
+                v['files'] = dict((os.path.basename(f), open(f).read()) for f in node['files'])
             cmdenvs = {'machines': base64.b64encode(json.dumps(machines)),
                        'job_id': job_id,
                        'ports': base64.b64encode(json.dumps(ports))}
+            if 'outputs' in node and node['outputs']:
+                v['outputs'] = node['outputs']
             hadoopy.writetb('%s/input/%d' % (input_path, node['name']), [(node['name'], v)])
         hadoopy.launch(input_path + '/input', input_path + '/output_path_empty', _lf('hadoopy_rt_job.py'), cmdenvs=cmdenvs,
                        jobconfs={'mapred.map.tasks.speculative.execution': 'false',
@@ -72,7 +82,7 @@ def _bind_first_port(zmq_sock, ports):
             return port
 
 
-def discover_server(job_id, num_nodes, machines, ports, setup_deadline=30):
+def discover_server(job_id, num_nodes, machines, ports, setup_deadline=120):
     # Setup discover port
     ctx = zmq.Context()
     sock = ctx.socket(zmq.REP)
@@ -153,6 +163,7 @@ class Slate(object):
     def _flush(self):
         if self._set:
             self._redis.hset(self._stream, self._key, self._data)
+            self._redis.publish(self._stream, self._key)
         
 
 class Updater(object):

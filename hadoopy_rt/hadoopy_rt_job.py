@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import base64
 import sys
+import redis
 
 
 class Mapper(object):
@@ -21,6 +22,7 @@ class Mapper(object):
     def map(self, node_num, data):
         num_nodes = data['num_nodes']
         sys.stderr.write('HadoopyRT: NodeNum[%d]\n' % (node_num,))
+        outputs = data.get('outputs')
         ctx = zmq.Context()
         in_sock = ctx.socket(zmq.PULL)
         # Randomly select an input port
@@ -33,6 +35,10 @@ class Mapper(object):
             cleanup_func = self.discover_server.terminate
         node_host_ports = hadoopy_rt.discover(self.job_id, self.machines, self.ports,
                                               node_num, worker_port)  # [node_num] = (host, port)
+        if 'files' in data:
+            for f, d in data['files'].items():
+                open(f, 'w').write(d)
+            data['files'] = list(data['files'])  # Convert to list, removes memory burden
         launch_kw_args = dict((x, data[x]) for x in ['files', 'cmdenvs'] if x in data)
         try:
             launch_kw_args['cmdenvs'] = hadoopy._runner._listeq_to_dict(launch_kw_args['cmdenvs'])
@@ -47,7 +53,23 @@ class Mapper(object):
             output_socket = ctx.socket(zmq.PUSH)
             output_socket.connect('tcp://%s:%d' % (host, port))
             output_sockets[node_num] = output_socket
-        hadoopy_rt.launch_zmq(in_sock, output_sockets, data['script_name'], cleanup_func=cleanup_func, **launch_kw_args)
+        sys.stderr.write('Outputs[%s]' % str(outputs))
+        while True:
+            try:
+                hadoopy_rt.launch_zmq(in_sock, output_sockets, data['script_name'], cleanup_func=cleanup_func, outputs=outputs,
+                                      **launch_kw_args)
+            except Exception, e:
+                sys.stderr.write('%s\n' % str(e))
+            sys.stderr.write('Done with zmq\n')
+            sys.stderr.write('Waiting for update[%s]\n' % data['script_name'])
+            ps = redis.StrictRedis().pubsub()
+            ps.subscribe(data['script_name'])
+            for x in ps.listen():
+                if x['type'] == 'message':
+                    sys.stderr.write('Writing update[%s]\n' % data['script_name'])
+                    open(data['script_name'], 'w').write(x['data'])
+                    break
+                        
 
 if __name__ == '__main__':
     hadoopy.run(Mapper)
