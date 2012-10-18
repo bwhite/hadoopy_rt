@@ -92,6 +92,7 @@ class FlowController(object):
         self.node_key = None
 
     def recv(self):
+        sys.stderr.write('Recv Waiting[%s]\n' % self.ip_port)
         if self.pull_socket is None:
             self._pull_socket()
         return self.pull_socket.recv_pyobj()
@@ -129,7 +130,7 @@ class FlowController(object):
                 except redis.WatchError:
                     print('Existing worker, waiting...')
                     time.sleep(self.heartbeat_timeout * random.random())
-        return sock
+        self.pull_socket = sock
 
     def _node_key(self, node_num):
         return 'nodenum-%s-%d' % (self.job_id, node_num)
