@@ -106,7 +106,7 @@ class FlowController(object):
         if self.node_num is None:
             raise ValueError('Node number is not set!')
         self.node_key = self._node_key(self.node_num)
-        sock = zmq.socket(zmq.PULL)
+        sock = self.zmq.socket(zmq.PULL)
         self.port = sock.bind_to_random_port('tcp://*',
                                              min_port=self.min_port,
                                              max_port=self.max_port,
