@@ -29,7 +29,7 @@ def launch_zmq(flow_controller, script_path, cleanup_func=None, outputs=None, **
             flow_controller.heartbeat()
             yield flow_controller.recv()
 
-    kvs = hadoopy.launch_local(_kvs(), None, script_path, poll=poll, **kw)['output']
+    kvs = hadoopy.launch_local(_kvs(), None, script_path, poll=flow_controller.poll, **kw)['output']
     if outputs is None:
         for k, v in kvs:
             # k is the node number, v is a k/v tuple
