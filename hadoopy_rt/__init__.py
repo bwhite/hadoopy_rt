@@ -13,8 +13,8 @@ import hadoopy_rt
 import redis
 
 
-class DiscoverTimeout(Exception):
-    """There was a problem discovering the participating nodes"""
+class SendTimeout(Exception):
+    """Timed out while sending to a node"""
 
 
 def _lf(fn):
@@ -22,26 +22,25 @@ def _lf(fn):
     return os.path.join(__path__[0], fn)
 
 
-def launch_zmq(input_socket, output_sockets, script_path, cleanup_func=None, outputs=None, **kw):
-    poll = lambda : input_socket.poll(100)
+def launch_zmq(flow_controller, script_path, cleanup_func=None, outputs=None, **kw):
 
     def _kvs():
         while True:
-            yield input_socket.recv_pyobj()
+            flow_controller.heartbeat()
+            yield flow_controller.recv()
 
     kvs = hadoopy.launch_local(_kvs(), None, script_path, poll=poll, **kw)['output']
-    sys.stderr.write('ZMQOutputs[%s]' % str(outputs))
     if outputs is None:
         for k, v in kvs:
             # k is the node number, v is a k/v tuple
-            output_sockets[k].send_pyobj(v)
+            flow_controller.send(k, v)
     else:
         for kv in kvs:
             for s in outputs:
-                output_sockets[s].send_pyobj(kv)
+                flow_controller.send(s, kv)
 
 
-def launch_map_update(nodes, machines, ports, job_id):
+def launch_map_update(nodes, job_id, redis_host):
     num_nodes = len(nodes)
     with hadoopy_helper.hdfs_temp() as input_path:
         for node in nodes:
@@ -53,9 +52,8 @@ def launch_map_update(nodes, machines, ports, job_id):
                 v['cmdenvs'] = node['cmdenvs']
             if 'files' in node and node['files'] is not None:
                 v['files'] = dict((os.path.basename(f), open(f).read()) for f in node['files'])
-            cmdenvs = {'machines': base64.b64encode(json.dumps(machines)),
-                       'job_id': job_id,
-                       'ports': base64.b64encode(json.dumps(ports))}
+            cmdenvs = {'job_id': job_id,
+                       'hadoopy_rt_redis': redis_host}
             if 'outputs' in node and node['outputs']:
                 v['outputs'] = node['outputs']
             hadoopy.writetb('%s/input/%d' % (input_path, node['name']), [(node['name'], v)])
@@ -72,65 +70,115 @@ def _get_ip():
     return ips[0]
 
 
-def _bind_first_port(zmq_sock, ports):
-    for port in ports:
-        try:
-            zmq_sock.bind('tcp://*:%s' % (port,))
-        except zmq.core.error.ZMQError:
-            continue
-        else:
-            return port
+class FlowController(object):
 
+    def __init__(self, job_id, redis_host, node_num=None, min_port=40000, max_port=65000, worker_timeout=30, heartbeat_timeout=10,
+                 send_timeout=120):
+        self.job_id = job_id
+        self.redis = redis.StrictRedis(redis_host, db=1)
+        self.min_port = min_port
+        self.max_port = max_port
+        self.node_num = node_num
+        self.ip = _get_ip()
+        self.port = None
+        self.ip_port = None
+        self.next_heartbeat = 0.
+        self.worker_timeout = max(1, int(worker_timeout))
+        self.heartbeat_timeout = max(1, min(heartbeat_timeout, worker_timeout))
+        self.send_timeout = max(1, int(send_timeout))
+        self.zmq = zmq.Context()
+        self.pull_socket = None
+        self.push_sockets = {}  # [node_num] = (socket, time)
+        self.node_key = None
 
-def discover_server(job_id, num_nodes, machines, ports, setup_deadline=120):
-    # Setup discover port
-    ctx = zmq.Context()
-    sock = ctx.socket(zmq.REP)
-    work_graph = {}  # [node_num] = (host, port)
-    _bind_first_port(sock, ports)
-    start_time = time.time()
-    while True:
-        if time.time() - start_time >= setup_deadline:  # TODO(brandyn): Put this on the recv too
-            raise DiscoverTimeout()
-        slave_job_id, slave_node_num, slave_ip, slave_port = sock.recv_pyobj()
-        if job_id != slave_job_id:
-            sock.send_pyobj('wrongid')  # They connected to the wrong server
-        else:
-            if slave_node_num >= 0:  # Negative values are ignored
+    def recv(self):
+        if self.pull_socket is None:
+            self._pull_socket()
+        return self.pull_socket.recv_pyobj()
+
+    def poll(self):
+        if self.pull_socket is None:
+            self._pull_socket()
+        self.pull_socket.poll(100)
+
+    def _pull_socket(self):
+        # Get a port for this machine
+        if self.node_num is None:
+            raise ValueError('Node number is not set!')
+        self.node_key = self._node_key(node_num)
+        sock = zmq.socket(zmq.PULL)
+        self.port = sock.bind_to_random_port('tcp://*',
+                                             min_port=self.min_port,
+                                             max_port=self.max_port,
+                                             max_tries=100)
+        # See if any other nodes are using this node number
+        self.ip_port = '%s:%s' % (self.ip, self.port)
+        with self.redis.pipeline() as pipe:
+            while 1:
                 try:
-                    if work_graph[slave_node_num] != (slave_ip, slave_port):
-                        raise ValueError('Conflicting slave ids [%s] != [%s]' % (work_graph[slave_node_num], (slave_ip, slave_port)))
-                except KeyError:
-                    work_graph[slave_node_num] = slave_ip, slave_port
-            if len(work_graph) < num_nodes:
-                sock.send_pyobj('trylater')  # They connected to the wrong server
-            else:
-                sock.send_pyobj(work_graph)
+                    pipe.watch(self.node_key)
+                    out = pipe.setnx(self.node_key, self.ip_port)
+                    if out:
+                        raise redis.WatchError
+                    else:
+                        pipe.expire(self.node_key, self.worker_timeout)
+                        self.next_heartbeat = self.heartbeat_timeout + time.time()
+                    pipe.execute()
+                    break
+                except redis.WatchError:
+                    print('Existing worker, waiting...')
+                    time.sleep(self.heartbeat_timeout * random.random())
+        return sock
 
+    def _node_key(self, node_num):
+        return 'nodenum-%s-%d' % (self.job_id, node_num)
 
-def discover(job_id, machines, ports, node_num=-1, input_port=-1):
-    ctx = zmq.Context()
-    slave_ip = _get_ip()
-    socks = []
-    try:
-        for machine in machines:
-            for port in ports:
-                sock = ctx.socket(zmq.REQ)
-                sock.connect('tcp://%s:%s' % (machine, port))
-                sock.send_pyobj((job_id, node_num, slave_ip, input_port))
-                socks.append(sock)
-        while True:
-            sock = zmq.select(socks, [], [])[0][0]
-            data = sock.recv_pyobj()
-            if data == 'trylater':
-                time.sleep(.1)
-                sock.send_pyobj((job_id, node_num, slave_ip, input_port))
-            elif isinstance(data, dict):
-                return data
-    finally:
-        # Close sockets
-        for sock in socks:
-            sock.close(0)
+    def heartbeat(self):
+        if self.pull_socket is None:
+            self._pull_socket()        
+        if time.time() < self.next_heartbeat:
+            return
+        with self.redis.pipeline() as pipe:
+            while 1:
+                try:
+                    pipe.watch(self.node_key)
+                    pipe.setnx(self.node_key, self.ip_port)
+                    out = pipe.get(self.node_key)
+                    if out != self.ip_port:
+                        raise redis.WatchError
+                    else:
+                        pipe.expire(self.node_key, self.worker_timeout)
+                        self.next_heartbeat = self.heartbeat_timeout + time.time()
+                    pipe.execute()
+                    break
+                except redis.WatchError:
+                    print('Existing worker, waiting...')
+                    time.sleep(self.heartbeat_timeout * random.random())
+
+    def send(self, node, kv):
+        node_key = self._node_key(node)
+        quit_time = time.time() + self.send_timeout
+        while 1:
+            if quit_time < time.time():
+                raise SendTimeout
+            try:
+                push_socket, expire_time = self.push_sockets[node]
+                if time.time() < expire_time:
+                    break
+            except KeyError:
+                pass
+            expire_time = time.time()
+            ip_port, ttl = self.redis.get(node_key), int(self.redis.ttl(node_key))
+            if ip_port is None or ttl == -1:
+                time.sleep(1)
+                continue
+            expire_time += ttl
+            push_socket = self.zmq.socket(zmq.PUSH)
+            push_socket.connect('tcp://' + ip_port)
+            self.push_sockets[node] = push_socket, expire_time
+            break
+        # At this point self.push_sockets[node] is updated as are push_socket and expire_time
+        push_socket.send_pyobj(kv)
 
 
 def _output_iter(iter_or_none):
@@ -169,7 +217,7 @@ class Slate(object):
 class Updater(object):
 
     def __init__(self):
-        self._redis = redis.StrictRedis()  # TODO(Brandyn): Allow setting non default
+        self._redis = redis.StrictRedis(os.environ['hadoopy_rt_redis'], db=0)  # TODO(Brandyn): Allow setting non default
         self._stream = os.environ['hadoopy_rt_stream']
 
     def map(self, key, value):
