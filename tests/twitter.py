@@ -10,7 +10,7 @@ def twitter(queries):
     quoted_queries = [urllib.quote(q) for q in queries]
     query_post = 'track=' + ",".join(quoted_queries)
     request = urllib2.Request(url, query_post)
-    auth = base64.b64encode('%s:%s' % (config.TWITTER['user'], config.TWITTER['password']))
+    auth = base64.b64encode('%s:%s' % (config['user'], config['password']))
     request.add_header('Authorization', "basic %s" % auth)
     for item in urllib2.urlopen(request):
         try:

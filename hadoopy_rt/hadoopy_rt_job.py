@@ -19,7 +19,7 @@ class Mapper(object):
     def map(self, node_num, data):
         num_nodes = data['num_nodes']
         sys.stderr.write('HadoopyRT: NodeNum[%d]\n' % (node_num,))
-        flow_controller = FlowController(self.job_id, node_num, redis_host=self.redis_server)
+        flow_controller = hadoopy_rt.FlowController(self.job_id, node_num, redis_host=self.redis_server)
         if 'files' in data:
             for f, d in data['files'].items():
                 open(f, 'w').write(d)
