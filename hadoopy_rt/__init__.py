@@ -99,9 +99,10 @@ class FlowController(object):
     def poll(self):
         if self.pull_socket is None:
             self._pull_socket()
-        self.pull_socket.poll(100)
+        return self.pull_socket.poll(100)
 
     def _pull_socket(self):
+        sys.stderr.write('Pull Socket\n')
         # Get a port for this machine
         if self.node_num is None:
             raise ValueError('Node number is not set!')
@@ -138,6 +139,7 @@ class FlowController(object):
             self._pull_socket()        
         if time.time() < self.next_heartbeat:
             return
+        sys.stderr.write('Heartbeat\n')
         with self.redis.pipeline() as pipe:
             while 1:
                 try:
@@ -156,6 +158,7 @@ class FlowController(object):
                     time.sleep(self.heartbeat_timeout * random.random())
 
     def send(self, node, kv):
+        sys.stderr.write('Sending[%s][%s]\n' % (str(node), str(kv)))
         node_key = self._node_key(node)
         quit_time = time.time() + self.send_timeout
         while 1:
