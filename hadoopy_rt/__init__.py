@@ -73,7 +73,7 @@ def _get_ip():
 class FlowController(object):
 
     def __init__(self, job_id, redis_host, send_timeout=120):
-        super(FlowControllerNode, self).__init__()
+        super(FlowController, self).__init__()
         self.job_id = job_id
         self.redis = redis.StrictRedis(redis_host, db=1)
         self.send_timeout = max(1, int(send_timeout))
