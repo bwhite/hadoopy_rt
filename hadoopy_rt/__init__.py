@@ -119,7 +119,7 @@ class FlowControllerNode(FlowController):
         self.ip = _get_ip()
         self.port = None
         self.heartbeat_timeout = heartbeat_timeout
-        self.last_heartbeat = 0.
+        self.next_heartbeat = 0.
         self.ip_port = None
         self.pull_socket = None
         self.node_key = None
