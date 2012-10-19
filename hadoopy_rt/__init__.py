@@ -87,6 +87,8 @@ class FlowController(object):
         while 1:
             if quit_time < time.time():
                 raise SendTimeout
+            if hasattr(self, '_heartbeat'):
+                self._heartbeat()
             try:
                 push_socket, expire_time = self.push_sockets[node]
                 if time.time() < expire_time:
