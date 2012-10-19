@@ -152,6 +152,8 @@ class FlowControllerNode(FlowController):
     def _heartbeat(self):
         if time.time() < self.next_heartbeat:
             return
+        if self.pull_socket is None:
+            self._pull_socket()
         while True:
             cur_ip_port = self.redis.get(self.node_key)
             if cur_ip_port is not None and cur_ip_port != self.ip_port:
