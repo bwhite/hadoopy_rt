@@ -113,7 +113,7 @@ class FlowController(object):
 class FlowControllerNode(FlowController):
 
     def __init__(self, job_id, redis_host, node_num, min_port=40000, max_port=65000,
-                 heartbeat_timeout=30, **kw):
+                 heartbeat_timeout=90, **kw):
         super(FlowControllerNode, self).__init__(job_id=job_id, redis_host=redis_host, **kw)
         self.min_port = min_port
         self.max_port = max_port
@@ -150,7 +150,7 @@ class FlowControllerNode(FlowController):
         self._heartbeat()
 
     def _heartbeat(self):
-        if self.next_heartbeat < time.time():
+        if time.time() < self.next_heartbeat:
             return
         while True:
             cur_ip_port = self.redis.get(self.node_key)
