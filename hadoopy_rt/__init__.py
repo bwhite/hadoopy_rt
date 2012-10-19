@@ -120,6 +120,7 @@ class FlowController(object):
                 try:
                     pipe.watch(self.node_key)
                     out = pipe.setnx(self.node_key, self.ip_port)
+                    pipe.multi()
                     sys.stderr.write('Setnx\n')
                     if not out:
                         raise redis.WatchError
