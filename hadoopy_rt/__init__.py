@@ -115,26 +115,22 @@ class FlowController(object):
                                                          max_tries=100)
         # See if any other nodes are using this node number
         self.ip_port = '%s:%s' % (self.ip, self.port)
-        with self.redis.pipeline() as pipe:
-            while 1:
-                try:
-                    pipe.watch(self.node_key)
-                    out = pipe.setnx(self.node_key, self.ip_port)
-                    pipe.multi()
-                    sys.stderr.write('Setnx\n')
-                    if not out:
-                        raise redis.WatchError
-                    else:
-                        sys.stderr.write('Expire\n')
-                        pipe.expire(self.node_key, self.worker_timeout)
-                        self.next_heartbeat = self.heartbeat_timeout + time.time()
+        while 1:
+            try:
+                out = redis.setnx(self.node_key, self.ip_port)
+                sys.stderr.write('Setnx\n')
+                if not out:
+                    raise redis.WatchError
+                else:
+                    sys.stderr.write('Expire\n')
+                    redis.expire(self.node_key, self.worker_timeout)
+                    self.next_heartbeat = self.heartbeat_timeout + time.time()
                     sys.stderr.write('Execute\n')
-                    pipe.execute()
                     sys.stderr.write('Done\n')
                     return
-                except redis.WatchError:
-                    sys.stderr.write('Existing worker, waiting...\n')
-                    time.sleep(self.heartbeat_timeout * random.random())
+            except redis.WatchError:
+                sys.stderr.write('Existing worker, waiting...\n')
+                time.sleep(self.heartbeat_timeout * random.random())
 
     def _node_key(self, node_num):
         return 'nodenum-%s-%d' % (self.job_id, node_num)
@@ -145,22 +141,19 @@ class FlowController(object):
         if time.time() < self.next_heartbeat:
             return
         sys.stderr.write('Heartbeat\n')
-        with self.redis.pipeline() as pipe:
-            while 1:
-                try:
-                    pipe.watch(self.node_key)
-                    pipe.setnx(self.node_key, self.ip_port)
-                    out = pipe.get(self.node_key)
-                    if out != self.ip_port:
-                        raise redis.WatchError
-                    else:
-                        pipe.expire(self.node_key, self.worker_timeout)
-                        self.next_heartbeat = self.heartbeat_timeout + time.time()
-                    pipe.execute()
+        while 1:
+            try:
+                redis.setnx(self.node_key, self.ip_port)
+                out = redis.get(self.node_key)
+                if out != self.ip_port:
+                    raise redis.WatchError
+                else:
+                    redis.expire(self.node_key, self.worker_timeout)
+                    self.next_heartbeat = self.heartbeat_timeout + time.time()
                     break
-                except redis.WatchError:
-                    sys.stderr.write('Existing worker, waiting...\n')
-                    time.sleep(self.heartbeat_timeout * random.random())
+            except redis.WatchError:
+                sys.stderr.write('Existing worker, waiting...\n')
+                time.sleep(self.heartbeat_timeout * random.random())
 
     def send(self, node, kv):
         sys.stderr.write('Sending[%s][%s]\n' % (str(node), str(kv)))
