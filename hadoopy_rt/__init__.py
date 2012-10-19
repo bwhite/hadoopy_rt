@@ -72,10 +72,43 @@ def _get_ip():
 
 class FlowController(object):
 
-    def __init__(self, job_id, redis_host, node_num=None, min_port=40000, max_port=65000, worker_timeout=30, heartbeat_timeout=10,
-                 send_timeout=120):
+    def __init__(self, job_id, redis_host, send_timeout=120):
+        super(FlowControllerNode, self).__init__()
         self.job_id = job_id
         self.redis = redis.StrictRedis(redis_host, db=1)
+        self.send_timeout = max(1, int(send_timeout))
+
+    def send(self, node, kv):
+        node_key = self._node_key(node)
+        quit_time = time.time() + self.send_timeout
+        while 1:
+            if quit_time < time.time():
+                raise SendTimeout
+            try:
+                push_socket, expire_time = self.push_sockets[node]
+                if time.time() < expire_time:
+                    break
+            except KeyError:
+                pass
+            expire_time = time.time()
+            ip_port, ttl = self.redis.get(node_key), int(self.redis.ttl(node_key))
+            if ip_port is None or ttl == -1:
+                time.sleep(1)
+                continue
+            expire_time += ttl
+            push_socket = self.zmq.socket(zmq.PUSH)
+            push_socket.connect('tcp://' + ip_port)
+            self.push_sockets[node] = push_socket, expire_time
+            break
+        # At this point self.push_sockets[node] is updated as are push_socket and expire_time
+        push_socket.send_pyobj(kv)
+
+
+class FlowControllerNode(FlowController):
+
+    def __init__(self, job_id, redis_host, node_num=None, min_port=40000, max_port=65000, worker_timeout=30,
+                 heartbeat_timeout=10, send_timeout=120):
+        super(FlowControllerNode, self).__init__(job_id=job_id, redis_host=redis_host, send_timeout=send_timeout)
         self.min_port = min_port
         self.max_port = max_port
         self.node_num = node_num
@@ -85,7 +118,6 @@ class FlowController(object):
         self.next_heartbeat = 0.
         self.worker_timeout = max(1, int(worker_timeout))
         self.heartbeat_timeout = max(1, min(heartbeat_timeout, worker_timeout))
-        self.send_timeout = max(1, int(send_timeout))
         self.zmq = zmq.Context()
         self.pull_socket = None
         self.push_sockets = {}  # [node_num] = (socket, time)
@@ -148,31 +180,6 @@ class FlowController(object):
             except redis.WatchError:
                 sys.stderr.write('Existing worker, waiting...\n')
                 time.sleep(self.heartbeat_timeout * random.random())
-
-    def send(self, node, kv):
-        node_key = self._node_key(node)
-        quit_time = time.time() + self.send_timeout
-        while 1:
-            if quit_time < time.time():
-                raise SendTimeout
-            try:
-                push_socket, expire_time = self.push_sockets[node]
-                if time.time() < expire_time:
-                    break
-            except KeyError:
-                pass
-            expire_time = time.time()
-            ip_port, ttl = self.redis.get(node_key), int(self.redis.ttl(node_key))
-            if ip_port is None or ttl == -1:
-                time.sleep(1)
-                continue
-            expire_time += ttl
-            push_socket = self.zmq.socket(zmq.PUSH)
-            push_socket.connect('tcp://' + ip_port)
-            self.push_sockets[node] = push_socket, expire_time
-            break
-        # At this point self.push_sockets[node] is updated as are push_socket and expire_time
-        push_socket.send_pyobj(kv)
 
 
 def _output_iter(iter_or_none):
