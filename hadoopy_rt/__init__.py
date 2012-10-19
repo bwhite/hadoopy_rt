@@ -81,6 +81,7 @@ class FlowController(object):
         self.zmq = zmq.Context()
 
     def send(self, node, kv):
+        sys.stderr.write('%s - %s\n' % (str(node), str(kv)))
         node_key = self._node_key(node)
         quit_time = time.time() + self.send_timeout
         while 1:
@@ -127,6 +128,7 @@ class FlowControllerNode(FlowController):
         self.node_key = None
 
     def recv(self):
+        sys.stderr.write('Recv\n')
         if self.pull_socket is None:
             self._pull_socket()
         return self.pull_socket.recv_pyobj()
