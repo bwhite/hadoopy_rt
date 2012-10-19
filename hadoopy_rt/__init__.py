@@ -108,11 +108,11 @@ class FlowController(object):
         if self.node_num is None:
             raise ValueError('Node number is not set!')
         self.node_key = self._node_key(self.node_num)
-        sock = self.zmq.socket(zmq.PULL)
-        self.port = sock.bind_to_random_port('tcp://*',
-                                             min_port=self.min_port,
-                                             max_port=self.max_port,
-                                             max_tries=100)
+        self.pull_socket = self.zmq.socket(zmq.PULL)
+        self.port = self.pull_socket.bind_to_random_port('tcp://*',
+                                                         min_port=self.min_port,
+                                                         max_port=self.max_port,
+                                                         max_tries=100)
         # See if any other nodes are using this node number
         self.ip_port = '%s:%s' % (self.ip, self.port)
         with self.redis.pipeline() as pipe:
@@ -120,17 +120,20 @@ class FlowController(object):
                 try:
                     pipe.watch(self.node_key)
                     out = pipe.setnx(self.node_key, self.ip_port)
+                    sys.stderr.write('Setnx\n')
                     if out:
                         raise redis.WatchError
                     else:
+                        sys.stderr.write('Expire\n')
                         pipe.expire(self.node_key, self.worker_timeout)
                         self.next_heartbeat = self.heartbeat_timeout + time.time()
+                    sys.stderr.write('Execute\n')
                     pipe.execute()
-                    break
+                    sys.stderr.write('Done\n')
+                    return
                 except redis.WatchError:
-                    print('Existing worker, waiting...')
+                    sys.stderr.write('Existing worker, waiting...\n')
                     time.sleep(self.heartbeat_timeout * random.random())
-        self.pull_socket = sock
 
     def _node_key(self, node_num):
         return 'nodenum-%s-%d' % (self.job_id, node_num)
@@ -155,7 +158,7 @@ class FlowController(object):
                     pipe.execute()
                     break
                 except redis.WatchError:
-                    print('Existing worker, waiting...')
+                    sys.stderr.write('Existing worker, waiting...\n')
                     time.sleep(self.heartbeat_timeout * random.random())
 
     def send(self, node, kv):
