@@ -72,12 +72,11 @@ def _get_ip():
 
 class FlowController(object):
 
-    def __init__(self, job_id, redis_host, send_timeout=120, worker_timeout=10):
+    def __init__(self, job_id, redis_host, send_timeout=120):
         super(FlowController, self).__init__()
         self.job_id = job_id
         self.redis = redis.StrictRedis(redis_host, db=1)
         self.send_timeout = max(1, int(send_timeout))
-        self.worker_timeout = max(1, worker_timeout)
         self.push_sockets = {}  # [node_num] = (socket, time)
         self.zmq = zmq.Context()
 
@@ -100,7 +99,7 @@ class FlowController(object):
                 continue
             push_socket = self.zmq.socket(zmq.PUSH)
             push_socket.connect('tcp://' + ip_port)
-            self.push_sockets[node] = push_socket, self.worker_timeout + time.time()
+            self.push_sockets[node] = push_socket, time.time() + max(1, self.redis.ttl(node_key))
             break
         # At this point self.push_sockets[node] is updated as are push_socket and expire_time
         push_socket.send_pyobj(kv)
@@ -111,13 +110,16 @@ class FlowController(object):
 
 class FlowControllerNode(FlowController):
 
-    def __init__(self, job_id, redis_host, node_num, min_port=40000, max_port=65000, **kw):
+    def __init__(self, job_id, redis_host, node_num, min_port=40000, max_port=65000,
+                 heartbeat_timeout=30, **kw):
         super(FlowControllerNode, self).__init__(job_id=job_id, redis_host=redis_host, **kw)
         self.min_port = min_port
         self.max_port = max_port
         self.node_num = node_num
         self.ip = _get_ip()
         self.port = None
+        self.heartbeat_timeout = heartbeat_timeout
+        self.last_heartbeat = 0.
         self.ip_port = None
         self.pull_socket = None
         self.node_key = None
@@ -131,6 +133,7 @@ class FlowControllerNode(FlowController):
     def poll(self):
         if self.pull_socket is None:
             self._pull_socket()
+        self._heartbeat()
         return self.pull_socket.poll(100)
 
     def _pull_socket(self):
@@ -141,8 +144,22 @@ class FlowControllerNode(FlowController):
                                                          min_port=self.min_port,
                                                          max_port=self.max_port,
                                                          max_tries=100)
+        self._heartbeat()
+
+    def _heartbeat(self):
+        if self.next_heartbeat < time.time():
+            return
         self.ip_port = '%s:%s' % (self.ip, self.port)
-        self.redis.set(self.node_key, self.ip_port)
+        while True:
+            cur_ip_port = self.redis.get(self.node_key)
+            if cur_ip_port is not None and cur_ip_port != self.ip_port:
+                sys.stderr.write('Another worker present, waiting...\n')
+                time.sleep(max(1, self.redis.ttl(self.node_key)))
+                continue
+            self.redis.set(self.node_key, self.ip_port)
+            self.redis.expire(self.node_key, self.heartbeat_timeout)
+            self.next_heartbeat = self.heartbeat_timeout / 2
+            break
 
 
 def _output_iter(iter_or_none):
