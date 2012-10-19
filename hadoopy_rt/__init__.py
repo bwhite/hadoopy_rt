@@ -92,7 +92,6 @@ class FlowController(object):
         self.node_key = None
 
     def recv(self):
-        sys.stderr.write('Recv Waiting[%s]\n' % self.ip_port)
         if self.pull_socket is None:
             self._pull_socket()
         return self.pull_socket.recv_pyobj()
@@ -118,15 +117,11 @@ class FlowController(object):
         while 1:
             try:
                 out = self.redis.setnx(self.node_key, self.ip_port)
-                sys.stderr.write('Setnx\n')
                 if not out:
                     raise redis.WatchError
                 else:
-                    sys.stderr.write('Expire\n')
                     self.redis.expire(self.node_key, self.worker_timeout)
                     self.next_heartbeat = self.heartbeat_timeout + time.time()
-                    sys.stderr.write('Execute\n')
-                    sys.stderr.write('Done\n')
                     return
             except redis.WatchError:
                 sys.stderr.write('Existing worker, waiting...\n')
@@ -140,7 +135,6 @@ class FlowController(object):
             self._pull_socket()        
         if time.time() < self.next_heartbeat:
             return
-        sys.stderr.write('Heartbeat\n')
         while 1:
             try:
                 self.redis.setnx(self.node_key, self.ip_port)
@@ -156,7 +150,6 @@ class FlowController(object):
                 time.sleep(self.heartbeat_timeout * random.random())
 
     def send(self, node, kv):
-        sys.stderr.write('Sending[%s][%s]\n' % (str(node), str(kv)))
         node_key = self._node_key(node)
         quit_time = time.time() + self.send_timeout
         while 1:
