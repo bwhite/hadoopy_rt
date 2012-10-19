@@ -144,12 +144,12 @@ class FlowControllerNode(FlowController):
                                                          min_port=self.min_port,
                                                          max_port=self.max_port,
                                                          max_tries=100)
+        self.ip_port = '%s:%s' % (self.ip, self.port)
         self._heartbeat()
 
     def _heartbeat(self):
         if self.next_heartbeat < time.time():
             return
-        self.ip_port = '%s:%s' % (self.ip, self.port)
         while True:
             cur_ip_port = self.redis.get(self.node_key)
             if cur_ip_port is not None and cur_ip_port != self.ip_port:
@@ -158,7 +158,7 @@ class FlowControllerNode(FlowController):
                 continue
             self.redis.set(self.node_key, self.ip_port)
             self.redis.expire(self.node_key, self.heartbeat_timeout)
-            self.next_heartbeat = self.heartbeat_timeout / 2
+            self.next_heartbeat = time.time() + self.heartbeat_timeout / 2
             break
 
 
