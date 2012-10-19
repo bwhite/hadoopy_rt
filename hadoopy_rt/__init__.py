@@ -103,10 +103,13 @@ class FlowController(object):
         # At this point self.push_sockets[node] is updated as are push_socket and expire_time
         push_socket.send_pyobj(kv)
 
+    def _node_key(self, node_num):
+        return 'nodenum-%s-%d' % (self.job_id, node_num)
+
 
 class FlowControllerNode(FlowController):
 
-    def __init__(self, job_id, redis_host, node_num=None, min_port=40000, max_port=65000, worker_timeout=30,
+    def __init__(self, job_id, redis_host, node_num, min_port=40000, max_port=65000, worker_timeout=30,
                  heartbeat_timeout=10, send_timeout=120):
         super(FlowControllerNode, self).__init__(job_id=job_id, redis_host=redis_host, send_timeout=send_timeout)
         self.min_port = min_port
@@ -158,9 +161,6 @@ class FlowControllerNode(FlowController):
             except redis.WatchError:
                 sys.stderr.write('Existing worker, waiting...\n')
                 time.sleep(self.heartbeat_timeout * random.random())
-
-    def _node_key(self, node_num):
-        return 'nodenum-%s-%d' % (self.job_id, node_num)
 
     def heartbeat(self):
         if self.pull_socket is None:
