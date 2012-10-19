@@ -26,7 +26,6 @@ def launch_zmq(flow_controller, script_path, cleanup_func=None, outputs=None, **
 
     def _kvs():
         while True:
-            flow_controller.heartbeat()
             yield flow_controller.recv()
 
     kvs = hadoopy.launch_local(_kvs(), None, script_path, poll=flow_controller.poll, **kw)['output']
@@ -73,11 +72,12 @@ def _get_ip():
 
 class FlowController(object):
 
-    def __init__(self, job_id, redis_host, send_timeout=120):
+    def __init__(self, job_id, redis_host, send_timeout=120, worker_timeout=10):
         super(FlowController, self).__init__()
         self.job_id = job_id
         self.redis = redis.StrictRedis(redis_host, db=1)
         self.send_timeout = max(1, int(send_timeout))
+        self.worker_timeout = max(1, worker_timeout)
         self.push_sockets = {}  # [node_num] = (socket, time)
         self.zmq = zmq.Context()
 
@@ -94,15 +94,13 @@ class FlowController(object):
                     break
             except KeyError:
                 pass
-            expire_time = time.time()
-            ip_port, ttl = self.redis.get(node_key), int(self.redis.ttl(node_key))
-            if ip_port is None or ttl == -1:
+            ip_port = self.redis.get(node_key)
+            if ip_port is None:
                 time.sleep(1)
                 continue
-            expire_time += ttl
             push_socket = self.zmq.socket(zmq.PUSH)
             push_socket.connect('tcp://' + ip_port)
-            self.push_sockets[node] = push_socket, expire_time
+            self.push_sockets[node] = push_socket, self.worker_timeout + time.time()
             break
         # At this point self.push_sockets[node] is updated as are push_socket and expire_time
         push_socket.send_pyobj(kv)
@@ -113,18 +111,14 @@ class FlowController(object):
 
 class FlowControllerNode(FlowController):
 
-    def __init__(self, job_id, redis_host, node_num, min_port=40000, max_port=65000, worker_timeout=30,
-                 heartbeat_timeout=10, send_timeout=120):
-        super(FlowControllerNode, self).__init__(job_id=job_id, redis_host=redis_host, send_timeout=send_timeout)
+    def __init__(self, job_id, redis_host, node_num, min_port=40000, max_port=65000, **kw):
+        super(FlowControllerNode, self).__init__(job_id=job_id, redis_host=redis_host, **kw)
         self.min_port = min_port
         self.max_port = max_port
         self.node_num = node_num
         self.ip = _get_ip()
         self.port = None
         self.ip_port = None
-        self.next_heartbeat = 0.
-        self.worker_timeout = max(1, int(worker_timeout))
-        self.heartbeat_timeout = max(1, min(heartbeat_timeout, worker_timeout))
         self.pull_socket = None
         self.node_key = None
 
@@ -141,48 +135,14 @@ class FlowControllerNode(FlowController):
 
     def _pull_socket(self):
         sys.stderr.write('Pull Socket\n')
-        # Get a port for this machine
-        if self.node_num is None:
-            raise ValueError('Node number is not set!')
         self.node_key = self._node_key(self.node_num)
         self.pull_socket = self.zmq.socket(zmq.PULL)
         self.port = self.pull_socket.bind_to_random_port('tcp://*',
                                                          min_port=self.min_port,
                                                          max_port=self.max_port,
                                                          max_tries=100)
-        # See if any other nodes are using this node number
         self.ip_port = '%s:%s' % (self.ip, self.port)
-        while 1:
-            try:
-                out = self.redis.setnx(self.node_key, self.ip_port)
-                if not out:
-                    raise redis.WatchError
-                else:
-                    self.redis.expire(self.node_key, self.worker_timeout)
-                    self.next_heartbeat = self.heartbeat_timeout + time.time()
-                    return
-            except redis.WatchError:
-                sys.stderr.write('Existing worker, waiting...\n')
-                time.sleep(self.heartbeat_timeout * random.random())
-
-    def heartbeat(self):
-        if self.pull_socket is None:
-            self._pull_socket()        
-        if time.time() < self.next_heartbeat:
-            return
-        while 1:
-            try:
-                self.redis.setnx(self.node_key, self.ip_port)
-                out = self.redis.get(self.node_key)
-                if out != self.ip_port:
-                    raise redis.WatchError
-                else:
-                    self.redis.expire(self.node_key, self.worker_timeout)
-                    self.next_heartbeat = self.heartbeat_timeout + time.time()
-                    break
-            except redis.WatchError:
-                sys.stderr.write('Existing worker, waiting...\n')
-                time.sleep(self.heartbeat_timeout * random.random())
+        self.redis.set(self.node_key, self.ip_port)
 
 
 def _output_iter(iter_or_none):
