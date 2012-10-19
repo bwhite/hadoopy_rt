@@ -17,7 +17,6 @@ class Mapper(object):
         self.redis_server = os.environ['hadoopy_rt_redis']
 
     def map(self, node_num, data):
-        num_nodes = data['num_nodes']
         sys.stderr.write('HadoopyRT: NodeNum[%d]\n' % (node_num,))
         flow_controller = hadoopy_rt.FlowControllerNode(self.job_id, self.redis_server, node_num)
         if 'files' in data:

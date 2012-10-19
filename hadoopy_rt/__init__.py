@@ -40,14 +40,17 @@ def launch_zmq(flow_controller, script_path, cleanup_func=None, outputs=None, **
                 flow_controller.send(s, kv)
 
 
-def launch_map_update(nodes, job_id, redis_host):
-    num_nodes = len(nodes)
+def launch_map_update(nodes, job_id, redis_host, jobconfs=None):
+    jobconfs_base = {'mapred.map.tasks.speculative.execution': 'false',
+                'mapred.reduce.tasks.speculative.execution': 'false',
+                'mapred.task.timeout': '0'}
+    if jobconfs:
+        jobconfs_base.update(jobconfs)
     with hadoopy_helper.hdfs_temp() as input_path:
         for node in nodes:
             print(node)
             v = {'script_name': os.path.basename(node['script_path']),
-                 'script_data': open(node['script_path']).read(),
-                 'num_nodes': num_nodes}
+                 'script_data': open(node['script_path']).read()}
             if 'cmdenvs' in node and node['cmdenvs'] is not None:
                 v['cmdenvs'] = node['cmdenvs']
             if 'files' in node and node['files'] is not None:
@@ -58,9 +61,7 @@ def launch_map_update(nodes, job_id, redis_host):
                 v['outputs'] = node['outputs']
             hadoopy.writetb('%s/input/%d' % (input_path, node['name']), [(node['name'], v)])
         hadoopy.launch(input_path + '/input', input_path + '/output_path_empty', _lf('hadoopy_rt_job.py'), cmdenvs=cmdenvs,
-                       jobconfs={'mapred.map.tasks.speculative.execution': 'false',
-                                 'mapred.reduce.tasks.speculative.execution': 'false',
-                                 'mapred.task.timeout': '0'})
+                       jobconfs=jobconfs_base)
 
     
 def _get_ip():
