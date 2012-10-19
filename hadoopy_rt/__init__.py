@@ -77,6 +77,8 @@ class FlowController(object):
         self.job_id = job_id
         self.redis = redis.StrictRedis(redis_host, db=1)
         self.send_timeout = max(1, int(send_timeout))
+        self.push_sockets = {}  # [node_num] = (socket, time)
+        self.zmq = zmq.Context()
 
     def send(self, node, kv):
         node_key = self._node_key(node)
@@ -121,9 +123,7 @@ class FlowControllerNode(FlowController):
         self.next_heartbeat = 0.
         self.worker_timeout = max(1, int(worker_timeout))
         self.heartbeat_timeout = max(1, min(heartbeat_timeout, worker_timeout))
-        self.zmq = zmq.Context()
         self.pull_socket = None
-        self.push_sockets = {}  # [node_num] = (socket, time)
         self.node_key = None
 
     def recv(self):
