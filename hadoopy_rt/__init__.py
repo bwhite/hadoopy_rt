@@ -117,13 +117,13 @@ class FlowController(object):
         self.ip_port = '%s:%s' % (self.ip, self.port)
         while 1:
             try:
-                out = redis.setnx(self.node_key, self.ip_port)
+                out = self.redis.setnx(self.node_key, self.ip_port)
                 sys.stderr.write('Setnx\n')
                 if not out:
                     raise redis.WatchError
                 else:
                     sys.stderr.write('Expire\n')
-                    redis.expire(self.node_key, self.worker_timeout)
+                    self.redis.expire(self.node_key, self.worker_timeout)
                     self.next_heartbeat = self.heartbeat_timeout + time.time()
                     sys.stderr.write('Execute\n')
                     sys.stderr.write('Done\n')
@@ -143,12 +143,12 @@ class FlowController(object):
         sys.stderr.write('Heartbeat\n')
         while 1:
             try:
-                redis.setnx(self.node_key, self.ip_port)
-                out = redis.get(self.node_key)
+                self.redis.setnx(self.node_key, self.ip_port)
+                out = self.redis.get(self.node_key)
                 if out != self.ip_port:
                     raise redis.WatchError
                 else:
-                    redis.expire(self.node_key, self.worker_timeout)
+                    self.redis.expire(self.node_key, self.worker_timeout)
                     self.next_heartbeat = self.heartbeat_timeout + time.time()
                     break
             except redis.WatchError:
