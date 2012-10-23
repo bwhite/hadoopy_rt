@@ -126,17 +126,18 @@ class FlowControllerNode(FlowController):
         self.pull_socket = None
         self.node_key = None
 
-    def recv(self):
+    def recv(self, flags=0):
         sys.stderr.write('Recv\n')
         if self.pull_socket is None:
             self._pull_socket()
-        return self.pull_socket.recv_pyobj()
+        self._heartbeat()
+        return self.pull_socket.recv_pyobj(flags=flags)
 
-    def poll(self):
+    def poll(self, timeout=100):
         if self.pull_socket is None:
             self._pull_socket()
         self._heartbeat()
-        return self.pull_socket.poll(100)
+        return self.pull_socket.poll(timeout)
 
     def _pull_socket(self):
         sys.stderr.write('Pull Socket\n')
